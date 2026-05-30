@@ -19,6 +19,7 @@ from app.core.database import Base
 from app.modules.adaptive import models as _adaptive_models  # noqa: F401
 from app.modules.ai import models as _ai_models  # noqa: F401
 from app.modules.attendance import models as _attendance_models  # noqa: F401
+from app.modules.blueprint import models as _blueprint_models  # noqa: F401
 from app.modules.content import models as _content_models  # noqa: F401
 from app.modules.courses import models as _courses_models  # noqa: F401
 from app.modules.enrollment import models as _enrollment_models  # noqa: F401

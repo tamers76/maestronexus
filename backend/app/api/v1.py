@@ -6,6 +6,7 @@ from app.modules.adaptive.router import router as adaptive_router
 from app.modules.ai.router import router as ai_router
 from app.modules.analytics.router import router as analytics_router
 from app.modules.attendance.router import router as attendance_router
+from app.modules.blueprint.router import router as blueprint_router
 from app.modules.content.router import router as content_router
 from app.modules.courses.router import router as courses_router
 from app.modules.enrollment.router import router as enrollment_router
@@ -30,5 +31,6 @@ for module_router in (
     notifications_router,
     integrations_router,
     stages_router,
+    blueprint_router,
 ):
     api_router.include_router(module_router)

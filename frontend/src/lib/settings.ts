@@ -92,10 +92,13 @@ export function updateAiSettings(patch: AiSettingsUpdate): Promise<AiSettingsRes
   return apiFetch<AiSettingsResponse>(BASE, { method: "PUT", json: patch });
 }
 
-export function testConnection(provider: string): Promise<TestConnectionResult> {
+export function testConnection(
+  provider: string,
+  creds?: { api_key?: string; base_url?: string },
+): Promise<TestConnectionResult> {
   return apiFetch<TestConnectionResult>(`${BASE}/test-connection`, {
     method: "POST",
-    json: { provider },
+    json: { provider, api_key: creds?.api_key, base_url: creds?.base_url },
   });
 }
 

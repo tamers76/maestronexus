@@ -9,6 +9,9 @@ import { apiFetch } from "@/lib/api";
 
 export type NodeState = "locked" | "available" | "completed" | "mastered";
 
+/** Blueprint readiness state, independent of graph traversal `state`. */
+export type ReadinessState = "not_ready" | "partially_ready" | "ready" | "advanced";
+
 export type ClassOut = {
   id: string;
   tenant_id: string;
@@ -47,6 +50,8 @@ export type NodeProgressOut = {
   node_title: string;
   node_type: string;
   state: NodeState;
+  /** Blueprint readiness, surfaced independently of traversal `state`. */
+  readiness_state?: ReadinessState | null;
   attempts: number;
   time_spent_seconds: number;
   confidence: number | null;

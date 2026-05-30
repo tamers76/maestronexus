@@ -12,12 +12,19 @@ import { type ProviderConfig, testConnection } from "@/lib/settings";
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
+  openrouter: "OpenRouter",
   anthropic: "Anthropic",
   azure_openai: "Azure OpenAI",
   google: "Google",
 };
 
-const LIVE_PROVIDERS = new Set(["openai"]);
+const LIVE_PROVIDERS = new Set(["openai", "openrouter"]);
+
+// Per-provider hint shown in the optional Base URL field.
+const BASE_URL_PLACEHOLDERS: Record<string, string> = {
+  openai: "https://api.openai.com/v1",
+  openrouter: "https://openrouter.ai/api/v1",
+};
 
 export function ProviderCard({
   provider,
@@ -38,7 +45,10 @@ export function ProviderCard({
     setTesting(true);
     setResult(null);
     try {
-      const r = await testConnection(provider);
+      const r = await testConnection(provider, {
+        api_key: config.api_key,
+        base_url: config.base_url,
+      });
       setResult({ ok: r.success, message: r.message });
     } catch (err) {
       setResult({
@@ -85,7 +95,7 @@ export function ProviderCard({
           <Input
             id={`${provider}-url`}
             value={config.base_url ?? ""}
-            placeholder="https://api.openai.com/v1"
+            placeholder={BASE_URL_PLACEHOLDERS[provider] ?? "https://api.openai.com/v1"}
             onChange={(e) => onChange({ ...config, base_url: e.target.value })}
           />
         </div>

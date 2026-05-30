@@ -15,14 +15,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.modules.ai.providers import PROVIDER_REGISTRY, get_provider
+from app.modules.ai.providers import get_provider
 from app.modules.integrations.models import AiSettings
 from app.modules.stages.definitions import STAGE_REGISTRY, ordered_stages
 from app.modules.stages.prompts import recommended_prompts
 
-# Providers whose credentials the Settings UI manages. OpenAI is live today; the
-# rest are slots that degrade to the offline stub until wired.
-MANAGED_PROVIDERS = ["openai", "anthropic", "azure_openai", "google"]
+# Providers whose credentials the Settings UI manages. OpenAI and OpenRouter are
+# live today; the rest are slots that degrade to the offline stub until wired.
+MANAGED_PROVIDERS = ["openai", "openrouter", "anthropic", "azure_openai", "google"]
+
+# OpenRouter is OpenAI-API-compatible; this is the public base URL used when no
+# explicit override is configured (per-tenant config or settings.openrouter_base_url).
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 _MASK_MARK = "\u2026"  # ellipsis used to mark a masked secret
 
@@ -94,10 +98,18 @@ def _provider_creds(config: dict, provider: str) -> tuple[str | None, str | None
         api_key = p.get("api_key") or settings.openai_api_key
         base_url = p.get("base_url") or settings.openai_base_url
         return api_key, base_url
+    if provider == "openrouter":
+        api_key = p.get("api_key") or settings.openrouter_api_key
+        base_url = (
+            p.get("base_url") or settings.openrouter_base_url or OPENROUTER_BASE_URL
+        )
+        return api_key, base_url
     return p.get("api_key"), p.get("base_url")
 
 
-def resolve_stage(config: dict, stage_key: str, *, mode_override: str | None = None) -> ResolvedStage:
+def resolve_stage(
+    config: dict, stage_key: str, *, mode_override: str | None = None
+) -> ResolvedStage:
     spec = STAGE_REGISTRY[stage_key]
     stages_cfg = config.get("stages") or {}
     stage_cfg = stages_cfg.get(stage_key) or {}
@@ -298,7 +310,7 @@ async def test_connection(
     if not api_key:
         return {"success": False, "message": "No API key configured for this provider."}
 
-    if provider != "openai":
+    if provider not in ("openai", "openrouter"):
         return {
             "success": True,
             "message": f"{spec.label}: key stored. Live testing not yet wired for this provider.",
@@ -307,10 +319,14 @@ async def test_connection(
     try:
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+        base = base_url or (OPENROUTER_BASE_URL if provider == "openrouter" else None)
+        client = AsyncOpenAI(api_key=api_key, base_url=base)
         models = await client.models.list()
         count = len(getattr(models, "data", []) or [])
-        return {"success": True, "message": f"OpenAI connection OK. {count} models available."}
+        return {
+            "success": True,
+            "message": f"{spec.label} connection OK. {count} models available.",
+        }
     except Exception as exc:  # network / auth / missing SDK
         return {"success": False, "message": f"Connection failed: {exc}"}
 
@@ -339,11 +355,36 @@ async def list_models(
                 return live
         except Exception:  # fall back to the static registry list
             pass
+
+    if provider == "openrouter":
+        # OpenRouter's /models endpoint is public; send the key as a Bearer token
+        # when configured but don't require it. Returns the full provider-namespaced
+        # catalog (e.g. anthropic/claude-3.5-sonnet).
+        try:
+            from openai import AsyncOpenAI
+
+            client = AsyncOpenAI(
+                api_key=api_key or "no-key",
+                base_url=base_url or OPENROUTER_BASE_URL,
+            )
+            resp = await client.models.list()
+            live = [
+                {"id": m.id, "name": getattr(m, "name", None) or m.id}
+                for m in getattr(resp, "data", []) or []
+                if getattr(m, "id", None)
+            ]
+            if live:
+                live.sort(key=lambda m: (m["name"] or m["id"]).lower())
+                return live
+        except Exception:  # fall back to the (empty) static registry list
+            pass
+
     return registry_models
 
 
 __all__ = [
     "MANAGED_PROVIDERS",
+    "OPENROUTER_BASE_URL",
     "ResolvedStage",
     "get_or_create",
     "resolve_stage",

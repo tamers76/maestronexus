@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 
 import { NextNodeCard } from "@/components/learn/next-node-card";
 import { NodeStateBadge } from "@/components/learn/node-state-badge";
+import { ReadinessStateBadge } from "@/components/learn/readiness-state-badge";
+import { EnrollmentSubmissions } from "@/components/faculty/enrollment-submissions";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -92,9 +95,19 @@ export function LearnerProgress({ enrollmentId }: { enrollmentId: string }) {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{detail.learner_name || "Learner"}</CardTitle>
-          <CardDescription>
-            {detail.nodes.filter((n) => n.state === "completed" || n.state === "mastered").length}{" "}
-            of {detail.nodes.length} nodes done
+          <CardDescription className="flex flex-wrap items-center gap-2">
+            <span>
+              {detail.nodes.filter((n) => n.state === "completed" || n.state === "mastered").length}{" "}
+              of {detail.nodes.length} nodes done
+            </span>
+            {(() => {
+              const needs = detail.nodes.filter(
+                (n) => n.readiness_state === "not_ready" || n.readiness_state === "partially_ready",
+              ).length;
+              return needs > 0 ? (
+                <Badge variant="warning">{needs} node(s) need support</Badge>
+              ) : null;
+            })()}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -104,6 +117,7 @@ export function LearnerProgress({ enrollmentId }: { enrollmentId: string }) {
                 <TableHead>Node</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>State</TableHead>
+                <TableHead>Readiness</TableHead>
                 <TableHead>Attempts</TableHead>
               </TableRow>
             </TableHeader>
@@ -114,6 +128,9 @@ export function LearnerProgress({ enrollmentId }: { enrollmentId: string }) {
                   <TableCell className="text-muted-foreground">{n.node_type}</TableCell>
                   <TableCell>
                     <NodeStateBadge state={n.state} />
+                  </TableCell>
+                  <TableCell>
+                    <ReadinessStateBadge state={n.readiness_state} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">{n.attempts}</TableCell>
                 </TableRow>
@@ -161,6 +178,8 @@ export function LearnerProgress({ enrollmentId }: { enrollmentId: string }) {
           </form>
         </CardContent>
       </Card>
+
+      <EnrollmentSubmissions key={enrollmentId} enrollmentId={enrollmentId} />
     </div>
   );
 }

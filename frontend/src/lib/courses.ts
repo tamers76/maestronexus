@@ -29,6 +29,8 @@ export type Course = {
   title: string;
   description: string | null;
   status: string;
+  course_code: string | null;
+  credit_hours: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -38,6 +40,88 @@ export type CourseCreate = {
   description?: string | null;
   program_id?: string | null;
 };
+
+// ── Course Learning Outcomes (CLOs) ───────────────────────────────────────────
+
+export type LearningOutcome = {
+  id: string;
+  course_id: string | null;
+  kind: string;
+  code: string | null;
+  statement: string;
+  attributes: Record<string, unknown>;
+  position: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StageRunInfo = {
+  id: string;
+  stage_key: string;
+  status: string;
+  review_status: string;
+  stubbed: boolean;
+  created_at: string;
+};
+
+export type CourseClos = {
+  clos: LearningOutcome[];
+  intake_run: StageRunInfo | null;
+  clo_refinement_run: StageRunInfo | null;
+};
+
+export type CourseWithClos = {
+  course: Course;
+  clos: LearningOutcome[];
+  intake_run: StageRunInfo | null;
+};
+
+export type CourseFromSyllabus = {
+  filename: string;
+  mime_type: string;
+  content_base64: string;
+  title?: string | null;
+};
+
+export type CourseFromForm = {
+  title: string;
+  description?: string | null;
+  course_code?: string | null;
+  credit_hours?: number | null;
+  clos: string[];
+};
+
+/** Read a File into a base64 string (no data: prefix). */
+export async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+export async function createCourseFromSyllabus(file: File): Promise<CourseWithClos> {
+  const content_base64 = await fileToBase64(file);
+  return apiFetch<CourseWithClos>("/courses/from-syllabus", {
+    method: "POST",
+    json: {
+      filename: file.name,
+      mime_type: file.type || "application/octet-stream",
+      content_base64,
+    } satisfies CourseFromSyllabus,
+  });
+}
+
+export function createCourseFromForm(payload: CourseFromForm): Promise<CourseWithClos> {
+  return apiFetch<CourseWithClos>("/courses/from-form", { method: "POST", json: payload });
+}
+
+export function getCourseClos(courseId: string): Promise<CourseClos> {
+  return apiFetch<CourseClos>(`/courses/${courseId}/clos`);
+}
 
 export type CourseUpdate = {
   title?: string;

@@ -16,7 +16,7 @@ from sqlalchemy import delete, select
 
 from app.core.database import SessionLocal, engine
 from app.main import app
-from app.modules.iam.models import Tenant, User
+from app.modules.iam.models import User
 from app.modules.integrations.models import AiSettings
 
 API = "/api/v1"
@@ -73,12 +73,13 @@ async def test_get_settings_returns_catalog_and_resolved(client: AsyncClient):
         resp = await client.get(AI, headers=_auth(token))
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        # All 12 stages present in the catalog + resolved view.
-        assert len(body["catalog"]) == 12
-        assert len(body["resolved"]) == 12
+        # All 18 Blueprint stages present in the catalog + resolved view.
+        assert len(body["catalog"]) == 18
+        assert len(body["resolved"]) == 18
         assert "openai" in body["managed_providers"]
-        # content_production defaults to council.
-        cp = next(r for r in body["resolved"] if r["stage_key"] == "content_production")
+        assert "openrouter" in body["managed_providers"]
+        # clo_review defaults to council.
+        cp = next(r for r in body["resolved"] if r["stage_key"] == "clo_review")
         assert cp["mode"] == "council"
     finally:
         await _cleanup_tenant_settings(ADMIN_EMAIL)
@@ -124,7 +125,7 @@ async def test_update_council_flows_into_resolved_view(client: AsyncClient):
         )
         assert put.status_code == 200, put.text
         resolved = put.json()["resolved"]
-        cp = next(r for r in resolved if r["stage_key"] == "content_production")
+        cp = next(r for r in resolved if r["stage_key"] == "clo_review")
         assert cp["council_models"] == ["gpt-4o-mini", "gpt-4o"]
         assert cp["chairman_model"] == "gpt-4o"
     finally:

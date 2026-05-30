@@ -73,6 +73,10 @@ class NodeProgress(UUIDPKMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("learning_nodes.id", ondelete="CASCADE"), nullable=False
     )
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="locked")
+    # Blueprint readiness state derived from node evidence (independent of the
+    # locked/available/completed/mastered traversal state). One of:
+    # not_ready | partially_ready | ready | advanced (or None before evidence).
+    readiness_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     time_spent_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)

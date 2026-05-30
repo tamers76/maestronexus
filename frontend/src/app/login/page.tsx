@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { GraduationCap, Sparkles } from "lucide-react";
 
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -46,14 +48,28 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-muted/30 px-6 py-16">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="relative flex flex-1 items-center justify-center overflow-hidden px-6 py-16">
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div className="dark-grid absolute inset-0 opacity-30" />
+        <div className="absolute -left-40 top-0 h-96 w-96 rounded-full bg-blue-600/20 blur-[120px]" />
+        <div className="absolute -right-20 bottom-0 h-96 w-96 rounded-full bg-purple-600/20 blur-[120px]" />
+      </div>
+      <div className="absolute right-6 top-6">
+        <ThemeToggle />
+      </div>
+      <Card className="w-full max-w-sm border-border bg-card/70 shadow-2xl backdrop-blur-xl">
+        <CardHeader className="items-center text-center">
+          <div className="relative mb-2 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 via-purple-500 to-indigo-500 text-white shadow-lg shadow-primary/30">
+            <GraduationCap className="size-7" />
+            <Sparkles className="absolute -right-1.5 -top-1.5 size-4 text-amber-300" />
+          </div>
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             maestronexus
           </span>
-          <CardTitle className="text-2xl">Sign in</CardTitle>
-          <CardDescription>The-Code Adaptive LMS</CardDescription>
+          <CardTitle className="font-display text-3xl">
+            <span className="gradient-text">Curriculum Intelligence</span>
+          </CardTitle>
+          <CardDescription>Sign in to the Adaptive Learning System</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="flex flex-col gap-4">

@@ -13,27 +13,35 @@ committed here; services only ``flush``.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.audit import record_audit
 from app.core.deps import Principal, SessionDep, require_permission
 from app.core.schemas import Message, Page
 from app.modules.courses import service
 from app.modules.courses.schemas import (
+    CourseClosOut,
     CourseCreate,
+    CourseFromFormRequest,
+    CourseFromSyllabusRequest,
     CourseOut,
     CourseUpdate,
     CourseVersionCreate,
     CourseVersionOut,
+    CourseWithClosOut,
     GraphResponse,
     LearningNodeCreate,
     LearningNodeOut,
     LearningNodeUpdate,
+    LearningOutcomeOut,
     NodeDependencyCreate,
     NodeDependencyOut,
+    StageRunInfo,
 )
 
 router = APIRouter(prefix="/courses", tags=["courses"])
@@ -68,6 +76,97 @@ async def create_course(
     return result
 
 
+def _run_info(run) -> StageRunInfo | None:
+    if run is None:
+        return None
+    return StageRunInfo(
+        id=run.id,
+        stage_key=run.stage_key,
+        status=run.status,
+        review_status=run.review_status,
+        stubbed=bool((run.output or {}).get("stubbed")),
+        created_at=run.created_at,
+    )
+
+
+@router.post(
+    "/from-syllabus",
+    response_model=CourseWithClosOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a course by parsing an uploaded syllabus (PDF/DOCX/text)",
+)
+async def create_course_from_syllabus(
+    payload: CourseFromSyllabusRequest, session: SessionDep, user: CourseManager
+) -> CourseWithClosOut:
+    try:
+        data = base64.b64decode(payload.content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="content_base64 is not valid base64",
+        ) from exc
+    course, clos, run = await service.create_course_from_syllabus(
+        session,
+        user,
+        filename=payload.filename,
+        mime_type=payload.mime_type,
+        data=data,
+        title=payload.title,
+    )
+    result = CourseWithClosOut(
+        course=CourseOut.model_validate(course),
+        clos=[LearningOutcomeOut.model_validate(c) for c in clos],
+        intake_run=_run_info(run),
+    )
+    await record_audit(
+        session,
+        tenant_id=user.tenant_id,
+        actor_id=user.id,
+        action="course.create.syllabus",
+        object_type="course",
+        object_id=course.id,
+        metadata={"clo_count": len(clos), "stage_run_id": str(run.id)},
+    )
+    await session.commit()
+    return result
+
+
+@router.post(
+    "/from-form",
+    response_model=CourseWithClosOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a course manually with its CLOs",
+)
+async def create_course_from_form(
+    payload: CourseFromFormRequest, session: SessionDep, user: CourseManager
+) -> CourseWithClosOut:
+    course, clos = await service.create_course_from_form(
+        session,
+        user,
+        title=payload.title,
+        description=payload.description,
+        course_code=payload.course_code,
+        credit_hours=payload.credit_hours,
+        clos=payload.clos,
+    )
+    result = CourseWithClosOut(
+        course=CourseOut.model_validate(course),
+        clos=[LearningOutcomeOut.model_validate(c) for c in clos],
+        intake_run=None,
+    )
+    await record_audit(
+        session,
+        tenant_id=user.tenant_id,
+        actor_id=user.id,
+        action="course.create.form",
+        object_type="course",
+        object_id=course.id,
+        metadata={"clo_count": len(clos)},
+    )
+    await session.commit()
+    return result
+
+
 @router.get("", response_model=Page[CourseOut], summary="List courses")
 async def list_courses(
     session: SessionDep,
@@ -90,6 +189,24 @@ async def get_course(
 ) -> CourseOut:
     course = await service.load_course(session, user, course_id)
     return CourseOut.model_validate(course)
+
+
+@router.get(
+    "/{course_id}/clos",
+    response_model=CourseClosOut,
+    summary="List a course's Course Learning Outcomes",
+)
+async def list_course_clos(
+    course_id: uuid.UUID, session: SessionDep, user: CourseManager
+) -> CourseClosOut:
+    clos = await service.list_course_clos(session, user, course_id)
+    intake_run = await service.latest_stage_run(session, course_id, "intake")
+    refinement_run = await service.latest_stage_run(session, course_id, "clo_refinement")
+    return CourseClosOut(
+        clos=[LearningOutcomeOut.model_validate(c) for c in clos],
+        intake_run=_run_info(intake_run),
+        clo_refinement_run=_run_info(refinement_run),
+    )
 
 
 @router.patch("/{course_id}", response_model=CourseOut, summary="Update a course")

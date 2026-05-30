@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_base_url: str | None = None  # optional override (proxy / gateway)
 
+    # OpenRouter (active) — OpenAI-compatible gateway to a live, provider-namespaced
+    # catalog (e.g. anthropic/claude-3.5-sonnet). base_url defaults to
+    # https://openrouter.ai/api/v1 when unset (resolved in the integrations service).
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str | None = None
+
     # Additional vendors (set the key in .env to enable):
     anthropic_api_key: str | None = None
     azure_openai_api_key: str | None = None

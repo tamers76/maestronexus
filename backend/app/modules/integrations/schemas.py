@@ -27,6 +27,10 @@ class AiSettingsUpdate(BaseModel):
 
 class TestConnectionRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=64)
+    # Optional unsaved credentials from the Settings form so the admin can test
+    # before persisting. A masked or empty api_key falls back to the stored one.
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 class TestConnectionResponse(BaseModel):

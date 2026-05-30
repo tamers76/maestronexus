@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import Principal, ensure_same_tenant
@@ -20,6 +20,7 @@ from app.modules.courses.models import (
     Course,
     CourseVersion,
     LearningNode,
+    LearningOutcome,
     NodeDependency,
 )
 from app.modules.courses.schemas import (
@@ -136,6 +137,375 @@ async def soft_delete_course(
     course.status = _ARCHIVED_STATUS
     await session.flush()
     return course
+
+
+# ── Course Learning Outcomes (CLOs) ───────────────────────────────────────────
+
+
+def _normalize_clos(artifact: object) -> list[dict]:
+    """Coerce a stage artifact into an ordered list of CLO dicts.
+
+    Accepts the intake ``course_contract`` (``{"clos": [...]}``) or a bare list,
+    where each entry is either a plain statement string or an object with a
+    ``code``/``clo_id`` and ``statement``/``clo_text``/``text``. Everything else
+    on the object is preserved as pedagogical ``attributes``.
+    """
+
+    raw: object = artifact
+    if isinstance(artifact, dict):
+        raw = (
+            artifact.get("clos")
+            or artifact.get("course_learning_outcomes")
+            or artifact.get("learning_outcomes")
+            or []
+        )
+    if not isinstance(raw, list):
+        return []
+
+    _STATEMENT_KEYS = ("statement", "clo_text", "text", "outcome")
+    _CODE_KEYS = ("code", "clo_id", "id")
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                out.append({"code": f"CLO-{len(out) + 1}", "statement": text, "attributes": {}})
+            continue
+        if not isinstance(item, dict):
+            continue
+        statement = ""
+        for key in _STATEMENT_KEYS:
+            if item.get(key):
+                statement = str(item[key]).strip()
+                break
+        if not statement:
+            continue
+        code = ""
+        for key in _CODE_KEYS:
+            if item.get(key):
+                code = str(item[key]).strip()
+                break
+        code = code or f"CLO-{len(out) + 1}"
+        attributes = {
+            k: v
+            for k, v in item.items()
+            if k not in {*_STATEMENT_KEYS, *_CODE_KEYS}
+        }
+        out.append({"code": code, "statement": statement, "attributes": attributes})
+    return out
+
+
+async def _replace_course_clos(
+    session: AsyncSession, user: Principal, course: Course, clos: list[dict]
+) -> list[LearningOutcome]:
+    """Replace the course's CLO rows with ``clos`` (ordered)."""
+
+    await session.execute(
+        delete(LearningOutcome).where(LearningOutcome.course_id == course.id)
+    )
+    rows: list[LearningOutcome] = []
+    for index, clo in enumerate(clos):
+        row = LearningOutcome(
+            tenant_id=user.tenant_id,
+            course_id=course.id,
+            kind="CLO",
+            code=clo.get("code"),
+            statement=clo["statement"],
+            attributes=clo.get("attributes") or {},
+            position=index,
+        )
+        session.add(row)
+        rows.append(row)
+    await session.flush()
+    return rows
+
+
+async def list_course_clos(
+    session: AsyncSession, user: Principal, course_id: uuid.UUID
+) -> list[LearningOutcome]:
+    await load_course(session, user, course_id)
+    rows = (
+        (
+            await session.execute(
+                select(LearningOutcome)
+                .where(LearningOutcome.course_id == course_id)
+                .order_by(LearningOutcome.position.asc(), LearningOutcome.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+def _store_syllabus(
+    tenant_id: uuid.UUID, course_id: uuid.UUID, filename: str, data: bytes, mime_type: str
+) -> str | None:
+    """Best-effort upload of the raw syllabus to object storage for provenance.
+
+    Returns the storage key, or ``None`` if storage is unavailable (the intake
+    stage still runs on the in-process extracted text).
+    """
+
+    from app.core.config import settings
+    from app.core.storage import get_s3_client
+
+    safe = filename.replace("/", "_").replace("\\", "_").strip() or "syllabus"
+    key = f"{tenant_id}/syllabi/{course_id}/{safe}"
+    try:
+        client = get_s3_client()
+        client.put_object(Bucket=settings.s3_bucket, Key=key, Body=data, ContentType=mime_type)
+    except Exception:  # storage down (e.g. local/dev/tests) — degrade gracefully
+        return None
+    return key
+
+
+def _filename_stem(filename: str) -> str:
+    stem = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if "." in stem:
+        stem = stem.rsplit(".", 1)[0]
+    return stem.replace("_", " ").replace("-", " ").strip()
+
+
+async def create_course_from_syllabus(
+    session: AsyncSession,
+    user: Principal,
+    *,
+    filename: str,
+    mime_type: str,
+    data: bytes,
+    title: str | None,
+):
+    """Parse an uploaded syllabus into a course + CLOs (DeepT Stage 1 port).
+
+    Creates the course, runs the Course Intake stage on the extracted text, then
+    persists the extracted CLOs as course-linked ``learning_outcomes``. Returns
+    ``(course, clos, intake_run)``.
+    """
+
+    # Lazy imports avoid a courses<->stages import cycle.
+    from app.modules.stages import extraction
+    from app.modules.stages import service as stages_service
+    from app.modules.stages.schemas import RunStageRequest
+
+    text = extraction.extract_text(data, filename=filename, mime_type=mime_type)
+
+    course = Course(
+        tenant_id=user.tenant_id,
+        created_by=user.id,
+        title=(title or _filename_stem(filename) or "Untitled course")[:255],
+        status="draft",
+    )
+    session.add(course)
+    await session.flush()
+
+    storage_key = _store_syllabus(user.tenant_id, course.id, filename, data, mime_type)
+
+    options: dict = {}
+    if text:
+        options["syllabus_text"] = text
+    if storage_key:
+        options["storage_key"] = storage_key
+
+    run = await stages_service.run_stage(
+        session, user, course.id, "intake", RunStageRequest(options=options)
+    )
+
+    meta = (run.output or {}).get("artifact")
+    meta = meta if isinstance(meta, dict) else {}
+    if not title and meta.get("title"):
+        course.title = str(meta["title"])[:255]
+    if meta.get("description"):
+        course.description = str(meta["description"])
+    if meta.get("course_code"):
+        course.course_code = str(meta["course_code"])[:64]
+    credit_hours = meta.get("credit_hours")
+    if isinstance(credit_hours, (int, float)):
+        course.credit_hours = int(credit_hours)
+
+    clos = await _replace_course_clos(session, user, course, _normalize_clos(meta))
+    await session.flush()
+    # Reload server-side columns (e.g. ``updated_at`` after the metadata update)
+    # within the async context so response serialization doesn't trigger lazy IO.
+    await session.refresh(course)
+    return course, clos, run
+
+
+async def create_course_from_form(
+    session: AsyncSession,
+    user: Principal,
+    *,
+    title: str,
+    description: str | None,
+    course_code: str | None,
+    credit_hours: int | None,
+    clos: list[str],
+) -> tuple[Course, list[LearningOutcome]]:
+    """Create a course and its CLOs from manual entry (DeepT 'Manual Entry')."""
+
+    course = Course(
+        tenant_id=user.tenant_id,
+        created_by=user.id,
+        title=title,
+        description=description,
+        course_code=course_code,
+        credit_hours=credit_hours,
+        status="draft",
+    )
+    session.add(course)
+    await session.flush()
+
+    normalized = [
+        {"code": f"CLO-{i + 1}", "statement": statement.strip(), "attributes": {}}
+        for i, statement in enumerate(clos)
+        if statement and statement.strip()
+    ]
+    rows = await _replace_course_clos(session, user, course, normalized)
+    return course, rows
+
+
+async def latest_stage_run(
+    session: AsyncSession, course_id: uuid.UUID, stage_key: str
+):
+    """Latest StageRun (any status) for a course + stage, or ``None``."""
+
+    from app.modules.stages.models import StageRun
+
+    return (
+        await session.execute(
+            select(StageRun)
+            .where(StageRun.course_id == course_id, StageRun.stage_key == stage_key)
+            .order_by(StageRun.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def promote_intake(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    course_id: uuid.UUID,
+    artifact: object,
+) -> int:
+    """Promote an approved intake ``course_contract`` onto the course.
+
+    Updates syllabus-derived metadata and *inserts any CLOs whose ``code`` is not
+    already present* (preserving previously refined wording). Idempotent: a
+    re-promotion of the same artifact adds no duplicate rows. Returns the number
+    of CLO rows newly inserted.
+    """
+
+    course = await session.get(Course, course_id)
+    if course is None:
+        return 0
+    meta = artifact if isinstance(artifact, dict) else {}
+    if meta.get("title"):
+        course.title = str(meta["title"])[:255]
+    if meta.get("description"):
+        course.description = str(meta["description"])
+    if meta.get("course_code"):
+        course.course_code = str(meta["course_code"])[:64]
+    credit_hours = meta.get("credit_hours")
+    if isinstance(credit_hours, int | float):
+        course.credit_hours = int(credit_hours)
+
+    rows = (
+        (
+            await session.execute(
+                select(LearningOutcome).where(LearningOutcome.course_id == course_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing_codes = {r.code for r in rows if r.code}
+    position = len(rows)
+    inserted = 0
+    for clo in _normalize_clos(meta):
+        if clo["code"] in existing_codes:
+            continue
+        session.add(
+            LearningOutcome(
+                tenant_id=tenant_id,
+                course_id=course_id,
+                kind="CLO",
+                code=clo["code"],
+                statement=clo["statement"],
+                attributes=clo.get("attributes") or {},
+                position=position,
+            )
+        )
+        existing_codes.add(clo["code"])
+        position += 1
+        inserted += 1
+    await session.flush()
+    return inserted
+
+
+async def apply_refined_clos(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    course_id: uuid.UUID,
+    refined: list,
+) -> None:
+    """Promote an approved CLO Refinement artifact onto the course's CLO rows.
+
+    Matches refined CLOs back to existing rows by ``code`` (falling back to
+    position); updates the statement and merges pedagogical attributes, keeping
+    the pre-refinement statement under ``attributes.original_statement``.
+    """
+
+    if not isinstance(refined, list):
+        return
+    rows = (
+        (
+            await session.execute(
+                select(LearningOutcome)
+                .where(LearningOutcome.course_id == course_id)
+                .order_by(LearningOutcome.position.asc(), LearningOutcome.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_code = {r.code: r for r in rows if r.code}
+
+    for index, item in enumerate(refined):
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip() or None
+        new_statement = str(
+            item.get("statement") or item.get("clo_text") or item.get("text") or ""
+        ).strip()
+        row = by_code.get(code) if code else None
+        if row is None and index < len(rows):
+            row = rows[index]
+        attrs_update = {
+            k: v
+            for k, v in item.items()
+            if k not in {"code", "statement", "clo_text", "text"}
+        }
+        if row is None:
+            row = LearningOutcome(
+                tenant_id=tenant_id,
+                course_id=course_id,
+                kind="CLO",
+                code=code or f"CLO-{index + 1}",
+                statement=new_statement or "(refined outcome)",
+                attributes={},
+                position=index,
+            )
+            session.add(row)
+        merged = dict(row.attributes or {})
+        if new_statement and new_statement != row.statement:
+            merged.setdefault("original_statement", row.statement)
+            row.statement = new_statement
+        merged.update(attrs_update)
+        merged["refined"] = True
+        row.attributes = merged
+    await session.flush()
 
 
 # ── Course versions ──────────────────────────────────────────────────────────

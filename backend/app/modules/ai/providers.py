@@ -42,6 +42,15 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         models=["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o3-mini"],
         api_key_field="openai_api_key",
     ),
+    # OpenRouter exposes a large, frequently-changing catalog, so the model list
+    # is fetched live from its API (see integrations.service.list_models) rather
+    # than hardcoded here; the empty list is only the offline fallback.
+    "openrouter": ProviderSpec(
+        key="openrouter",
+        label="OpenRouter",
+        models=[],
+        api_key_field="openrouter_api_key",
+    ),
     "anthropic": ProviderSpec(
         key="anthropic",
         label="Anthropic",

@@ -37,6 +37,9 @@ export function SettingsWorkbench() {
   const [data, setData] = useState<AiSettingsResponse | null>(null);
   const [draft, setDraft] = useState<AiConfig>({});
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  // Which provider's live catalog feeds the council/stage model dropdowns.
+  const [catalogProvider, setCatalogProvider] = useState("openai");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,12 +54,10 @@ export function SettingsWorkbench() {
         if (!active) return;
         setData(resp);
         setDraft(structuredClone(resp.config));
-        try {
-          const m = await listProviderModels("openai");
-          if (active) setModels(m);
-        } catch {
-          /* models optional */
-        }
+        // Prefer OpenRouter's catalog when a key is configured (its full
+        // provider-namespaced catalog is the richest), else fall back to OpenAI.
+        const providers = resp.config.providers ?? {};
+        setCatalogProvider(providers.openrouter?.configured ? "openrouter" : "openai");
       } catch (err) {
         if (active)
           setError(err instanceof ApiError ? err.message : "Failed to load settings.");
@@ -68,6 +69,33 @@ export function SettingsWorkbench() {
       active = false;
     };
   }, [canManage]);
+
+  // Load the selected provider's model catalog (re-runs when the source changes).
+  useEffect(() => {
+    if (!canManage) return;
+    let active = true;
+    (async () => {
+      setModelsLoading(true);
+      try {
+        const m = await listProviderModels(catalogProvider);
+        if (active) setModels(m);
+      } catch {
+        if (active) setModels([]);
+      } finally {
+        if (active) setModelsLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [canManage, catalogProvider]);
+
+  // Providers whose live catalogs can populate the model dropdowns.
+  const catalogProviders = useMemo(
+    () =>
+      (data?.managed_providers ?? []).filter((p) => p === "openai" || p === "openrouter"),
+    [data],
+  );
 
   const serverResolved = useMemo(() => {
     const map: Record<string, ResolvedStage> = {};
@@ -197,8 +225,9 @@ export function SettingsWorkbench() {
             <CardHeader>
               <CardTitle className="text-base">Providers &amp; API keys</CardTitle>
               <CardDescription>
-                Keys are stored per institution and never returned in full. OpenAI runs
-                live; other providers fall back to the offline stub until wired.
+                Keys are stored per institution and never returned in full. OpenAI and
+                OpenRouter run live; other providers fall back to the offline stub until
+                wired.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -222,6 +251,30 @@ export function SettingsWorkbench() {
               member models the same task in parallel, then a chairman model synthesizes
               one answer. Set a default below, then tune any of the 12 stages.
             </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 p-3 text-sm">
+            <Sparkles className="size-4 shrink-0 text-primary" />
+            <label htmlFor="catalog-source" className="font-medium text-foreground">
+              Model catalog source
+            </label>
+            <select
+              id="catalog-source"
+              value={catalogProvider}
+              onChange={(e) => setCatalogProvider(e.target.value)}
+              className="h-8 rounded-lg border border-border bg-background px-2 text-sm shadow-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+            >
+              {(catalogProviders.length ? catalogProviders : ["openai"]).map((p) => (
+                <option key={p} value={p}>
+                  {p === "openrouter" ? "OpenRouter" : "OpenAI"}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-muted-foreground">
+              {modelsLoading
+                ? "Loading models…"
+                : `${models.length} model${models.length === 1 ? "" : "s"} available for the dropdowns below.`}
+            </span>
           </div>
 
           <CouncilDefaultsCard

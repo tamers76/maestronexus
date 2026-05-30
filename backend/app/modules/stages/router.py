@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Query
 from app.core.deps import Principal, SessionDep, require_permission
 from app.modules.stages import service
 from app.modules.stages.schemas import (
+    ApprovedArtifactOut,
     ReviewRequest,
     RunStageRequest,
     StageCatalogItem,
@@ -44,7 +45,9 @@ def _run_summary(run) -> StageRunSummary | None:
     )
 
 
-@router.get("", response_model=list[StageCatalogItem], summary="The 12-stage catalog")
+@router.get(
+    "", response_model=list[StageCatalogItem], summary="The 18-stage Blueprint catalog"
+)
 async def get_catalog(user: StageRunner) -> list[StageCatalogItem]:
     return [StageCatalogItem(**item) for item in service.catalog()]
 
@@ -67,10 +70,26 @@ async def course_stages(
             risk=r["risk"],
             default_execution=r["default_execution"],
             promotes_to=r["promotes_to"],
+            aliases=r["aliases"],
             last_run=_run_summary(r["last_run"]),
         )
         for r in rows
     ]
+
+
+@router.get(
+    "/courses/{course_id}/stages/{stage_key}/approved",
+    response_model=ApprovedArtifactOut | None,
+    summary="Current approved design artifact for a stage on a course",
+)
+async def approved_artifact(
+    course_id: uuid.UUID,
+    stage_key: str,
+    session: SessionDep,
+    user: StageRunner,
+) -> ApprovedArtifactOut | None:
+    data = await service.approved_artifact(session, user, course_id, stage_key)
+    return ApprovedArtifactOut(**data) if data else None
 
 
 @router.post(

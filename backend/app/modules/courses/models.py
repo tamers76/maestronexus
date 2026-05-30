@@ -32,6 +32,9 @@ class Course(UUIDPKMixin, TenantMixin, TimestampMixin, CreatedByMixin, Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    # Syllabus-derived metadata captured at intake (or manual entry).
+    course_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    credit_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class CourseVersion(UUIDPKMixin, TimestampMixin, CreatedByMixin, Base):
@@ -126,6 +129,14 @@ class LearningOutcome(UUIDPKMixin, TenantMixin, TimestampMixin, Base):
     kind: Mapped[str] = mapped_column(String(32), nullable=False, default="CLO")
     code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     statement: Mapped[str] = mapped_column(Text, nullable=False)
+    # Course-scoped CLOs (extracted at intake, strengthened at CLO refinement).
+    course_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # Pedagogical metadata: bloom_level, knowledge_type, measurable,
+    # capability_statement, evidence_of_mastery, refined, original_statement, …
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class NodeSkill(UUIDPKMixin, Base):

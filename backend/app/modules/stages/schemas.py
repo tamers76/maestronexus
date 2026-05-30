@@ -19,6 +19,7 @@ class StageCatalogItem(BaseModel):
     default_execution: str
     risk: str
     promotes_to: str | None = None
+    aliases: list[str] = Field(default_factory=list)
 
 
 class StageRunSummary(BaseModel):
@@ -42,6 +43,7 @@ class StageStatus(BaseModel):
     risk: str
     default_execution: str
     promotes_to: str | None = None
+    aliases: list[str] = Field(default_factory=list)
     last_run: StageRunSummary | None = None
 
 
@@ -76,6 +78,18 @@ class ReviewRequest(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class ApprovedArtifactOut(BaseModel):
+    """The current approved design artifact for a stage on a course."""
+
+    stage_key: str
+    source: str  # "design_artifact" | "stage_run"
+    review_status: str
+    course_version_id: uuid.UUID | None = None
+    source_run_id: uuid.UUID | None = None
+    artifact: Any | None = None
+    updated_at: str
+
+
 __all__ = [
     "StageCatalogItem",
     "StageRunSummary",
@@ -83,4 +97,5 @@ __all__ = [
     "StageRunOut",
     "RunStageRequest",
     "ReviewRequest",
+    "ApprovedArtifactOut",
 ]

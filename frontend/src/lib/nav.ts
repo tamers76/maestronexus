@@ -34,6 +34,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Classes", href: "/teacher/classes", permission: "class.manage", icon: "users" },
       { label: "Attendance", href: "/teacher/attendance", permission: "attendance.manage", icon: "calendar-check" },
       { label: "Grading", href: "/teacher/grading", permission: "project.grade", icon: "clipboard-check" },
+      { label: "Submissions", href: "/teacher/submissions", permission: "project.grade", icon: "inbox" },
+      { label: "Analytics", href: "/teacher/analytics", permission: "report.view_class", icon: "bar-chart-3" },
     ],
   },
   {

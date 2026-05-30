@@ -40,8 +40,73 @@ class CourseOut(BaseModel):
     title: str
     description: str | None
     status: str
+    course_code: str | None = None
+    credit_hours: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ── Course Learning Outcomes (CLOs) ───────────────────────────────────────────
+
+
+class CourseFromSyllabusRequest(BaseModel):
+    """Create a course by parsing an uploaded syllabus (PDF/DOCX/text).
+
+    The file is sent base64-encoded in the JSON body (mirrors the content media
+    upload convention) so no multipart handling is required.
+    """
+
+    filename: str = Field(min_length=1, max_length=255)
+    mime_type: str = Field(default="application/octet-stream", max_length=128)
+    content_base64: str = Field(min_length=1)
+    title: str | None = Field(default=None, max_length=255)
+
+
+class CourseFromFormRequest(BaseModel):
+    """Create a course manually with its CLOs (DeepT 'Manual Entry')."""
+
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    course_code: str | None = Field(default=None, max_length=64)
+    credit_hours: int | None = Field(default=None, ge=0)
+    clos: list[str] = Field(default_factory=list)
+
+
+class LearningOutcomeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    course_id: uuid.UUID | None
+    kind: str
+    code: str | None
+    statement: str
+    attributes: dict
+    position: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class StageRunInfo(BaseModel):
+    """Lightweight stage-run summary surfaced alongside CLOs."""
+
+    id: uuid.UUID
+    stage_key: str
+    status: str
+    review_status: str
+    stubbed: bool = False
+    created_at: datetime
+
+
+class CourseClosOut(BaseModel):
+    clos: list[LearningOutcomeOut]
+    intake_run: StageRunInfo | None = None
+    clo_refinement_run: StageRunInfo | None = None
+
+
+class CourseWithClosOut(BaseModel):
+    course: CourseOut
+    clos: list[LearningOutcomeOut]
+    intake_run: StageRunInfo | None = None
 
 
 # ── Course versions ──────────────────────────────────────────────────────────

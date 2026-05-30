@@ -157,8 +157,10 @@ export function StageBoard() {
         <div className="flex-1">
           <h1 className="text-xl font-semibold tracking-tight">Maestro Studio</h1>
           <p className="text-sm text-muted-foreground">
-            The 12 stages as independent features. Run or re-run any stage, in single or
-            council mode — order is up to you.
+            The 18-stage Maestro Blueprint flow — from syllabus intake through
+            curriculum re-engineering, contribution assessments, and analytics.
+            Run or re-run any stage in single or council mode; SME approval
+            promotes its artifact into the course.
           </p>
         </div>
       </header>
@@ -223,7 +225,13 @@ export function StageBoard() {
         description="Run output, council transcript, and SME governance."
         className="max-w-3xl"
       >
-        {activeRun && <StageRunDetail run={activeRun} onReviewed={onReviewed} />}
+        {activeRun && (
+          <StageRunDetail
+            run={activeRun}
+            stage={stages.find((s) => s.key === activeRun.stage_key) ?? null}
+            onReviewed={onReviewed}
+          />
+        )}
       </Modal>
     </div>
   );

@@ -10,6 +10,8 @@ every row it creates.
 
 from __future__ import annotations
 
+import base64
+import re
 import uuid
 from collections.abc import AsyncIterator
 
@@ -19,14 +21,27 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import SessionLocal, get_session
 from app.main import app
 from app.modules.courses.models import Course
 from app.modules.iam.models import AuditLog
+from app.modules.stages.models import StageRun
 
 BASE = "http://test"
 API = "/api/v1"
 PASSWORD = "pass"
+
+
+def _canon_clo_code(code: str) -> str:
+    """Normalize a CLO code for comparison (``CLO1`` and ``CLO-1`` are equal).
+
+    The offline deterministic syllabus extractor renumbers outcomes to the
+    canonical ``CLO-1`` form, whereas a live LLM may echo the syllabus' own
+    ``CLO1`` spelling. Both are valid identifiers (downstream CLO matching falls
+    back to position), so tests compare on a punctuation-insensitive form.
+    """
+
+    return re.sub(r"[^a-z0-9]", "", (code or "").lower())
 
 
 async def _login(client: AsyncClient, email: str) -> str:
@@ -212,6 +227,202 @@ async def test_designer_builds_and_publishes_graph(client: AsyncClient, sessionm
     finally:
         if course_id is not None:
             await _cleanup(sessionmaker, course_id, created_ids)
+
+
+async def _cleanup_clo_course(course_id: uuid.UUID) -> None:
+    async with SessionLocal() as session:
+        await session.execute(delete(StageRun).where(StageRun.course_id == course_id))
+        # learning_outcomes cascade on course delete; Course cascade covers versions.
+        await session.execute(delete(Course).where(Course.id == course_id))
+        await session.commit()
+
+
+async def test_create_course_from_form_extracts_clos(client: AsyncClient):
+    token = await _login(client, "designer")
+    auth = {"Authorization": f"Bearer {token}"}
+
+    course_id: uuid.UUID | None = None
+    try:
+        res = await client.post(
+            f"{API}/courses/from-form",
+            headers=auth,
+            json={
+                "title": "Curriculum Design",
+                "description": "manual entry test",
+                "course_code": "MDLD602",
+                "credit_hours": 3,
+                "clos": [
+                    "Evaluate strengths and limitations of a curriculum framework",
+                    "Design an adaptive learning sequence",
+                    "   ",
+                ],
+            },
+        )
+        assert res.status_code == 201, res.text
+        body = res.json()
+        course_id = uuid.UUID(body["course"]["id"])
+        assert body["course"]["course_code"] == "MDLD602"
+        assert body["course"]["credit_hours"] == 3
+        # Blank CLO is dropped; codes are auto-assigned.
+        assert len(body["clos"]) == 2
+        assert {c["code"] for c in body["clos"]} == {"CLO-1", "CLO-2"}
+
+        res = await client.get(f"{API}/courses/{course_id}/clos", headers=auth)
+        assert res.status_code == 200, res.text
+        clos = res.json()
+        assert len(clos["clos"]) == 2
+        assert clos["clos"][0]["position"] == 0
+    finally:
+        if course_id is not None:
+            await _cleanup_clo_course(course_id)
+
+
+async def test_create_course_from_syllabus_extracts_clos(client: AsyncClient):
+    """Uploading a syllabus whose text contains CLOs yields extracted CLO rows.
+
+    Reproduces the original bug (offline intake stage returned no ``clos`` so no
+    rows were written) and proves the DeepT Stage-1 fallback now recovers them.
+    """
+
+    token = await _login(client, "designer")
+    auth = {"Authorization": f"Bearer {token}"}
+
+    syllabus = (
+        "Course Title: Introduction to Data Science\n"
+        "Course Code: DS 101\n"
+        "Credit Hours: 3\n\n"
+        "Course Description:\n"
+        "An introductory survey of data science methods.\n\n"
+        "Course Learning Outcomes (CLOs):\n"
+        "CLO1: Explain the fundamental concepts of data science and its applications.\n"
+        "CLO2: Apply statistical methods to analyze real-world datasets.\n"
+        "CLO3: Evaluate the effectiveness of machine learning models for a problem.\n\n"
+        "Weekly Plan:\n"
+        "Week 1: Introduction to the field\n"
+        "Week 2: Probability and statistics review\n"
+    )
+    content_b64 = base64.b64encode(syllabus.encode("utf-8")).decode("ascii")
+
+    course_id: uuid.UUID | None = None
+    try:
+        res = await client.post(
+            f"{API}/courses/from-syllabus",
+            headers=auth,
+            json={
+                "filename": "ds101_syllabus.txt",
+                "mime_type": "text/plain",
+                "content_base64": content_b64,
+            },
+        )
+        assert res.status_code == 201, res.text
+        body = res.json()
+        course_id = uuid.UUID(body["course"]["id"])
+
+        # CLOs are extracted verbatim from the syllabus even with the offline stub.
+        statements = [c["statement"] for c in body["clos"]]
+        assert len(statements) == 3, statements
+        assert statements[0].startswith("Explain the fundamental concepts")
+        # Codes are sequential CLO identifiers; tolerate live-LLM ``CLO1`` and
+        # offline ``CLO-1`` spellings without weakening the extraction coverage.
+        assert {_canon_clo_code(c["code"]) for c in body["clos"]} == {
+            "clo1",
+            "clo2",
+            "clo3",
+        }
+
+        # Course metadata is recovered from the document too.
+        assert body["course"]["title"] == "Introduction to Data Science"
+        assert body["course"]["course_code"] == "DS 101"
+        assert body["course"]["credit_hours"] == 3
+
+        # And the rows persist / are listable in order.
+        res = await client.get(f"{API}/courses/{course_id}/clos", headers=auth)
+        assert res.status_code == 200, res.text
+        clos = res.json()["clos"]
+        assert len(clos) == 3
+        assert clos[0]["position"] == 0
+    finally:
+        if course_id is not None:
+            await _cleanup_clo_course(course_id)
+
+
+async def test_clo_refinement_promotes_on_sme_approval(client: AsyncClient):
+    designer = await _login(client, "designer")
+    admin = await _login(client, "admin")
+
+    course_id: uuid.UUID | None = None
+    try:
+        res = await client.post(
+            f"{API}/courses/from-form",
+            headers={"Authorization": f"Bearer {designer}"},
+            json={"title": "Refine Me", "clos": ["Explain the water cycle"]},
+        )
+        assert res.status_code == 201, res.text
+        course_id = uuid.UUID(res.json()["course"]["id"])
+
+        # Seed a succeeded CLO Refinement run with a structured artifact (the
+        # offline LLM stub can't emit valid JSON, so craft it directly).
+        async with SessionLocal() as session:
+            course = await session.get(Course, course_id)
+            run = StageRun(
+                tenant_id=course.tenant_id,
+                created_by=course.created_by,
+                course_id=course_id,
+                stage_key="clo_refinement",
+                status="succeeded",
+                execution_mode="single",
+                input_refs={},
+                output={
+                    "text": "{}",
+                    "artifact": {
+                        "clos": [
+                            {
+                                "code": "CLO-1",
+                                "original_statement": "Explain the water cycle",
+                                "statement": (
+                                    "Analyze the stages of the water cycle using "
+                                    "evidence-based criteria"
+                                ),
+                                "bloom_level": "Analyze",
+                                "measurable": True,
+                                "evidence_of_mastery": "Annotated diagram with justification",
+                            }
+                        ]
+                    },
+                    "gaps": [],
+                    "stubbed": True,
+                    "output_kind": "refined_clos",
+                },
+                council_transcript={},
+                risk_score=0.3,
+                review_status="needs_review",
+            )
+            session.add(run)
+            await session.commit()
+            run_id = run.id
+
+        # SME (admin) approves -> promotion updates the course CLO row.
+        res = await client.post(
+            f"{API}/stages/runs/{run_id}/approve",
+            headers={"Authorization": f"Bearer {admin}"},
+            json={"note": "looks good"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["review_status"] == "approved"
+
+        res = await client.get(
+            f"{API}/courses/{course_id}/clos",
+            headers={"Authorization": f"Bearer {designer}"},
+        )
+        assert res.status_code == 200, res.text
+        clo = res.json()["clos"][0]
+        assert clo["statement"].startswith("Analyze the stages")
+        assert clo["attributes"]["refined"] is True
+        assert clo["attributes"]["original_statement"] == "Explain the water cycle"
+        assert clo["attributes"]["bloom_level"] == "Analyze"
+    finally:
+        if course_id is not None:
+            await _cleanup_clo_course(course_id)
 
 
 async def test_learner_cannot_manage_courses(client: AsyncClient):

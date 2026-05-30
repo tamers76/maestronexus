@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.audit import record_audit
 from app.core.deps import Principal, SessionDep, require_permission
-from app.core.schemas import Message
 from app.modules.integrations import service
 from app.modules.integrations.schemas import (
     AiSettingsResponse,
@@ -87,7 +86,12 @@ async def test_connection(
 ) -> TestConnectionResponse:
     row = await service.get_or_create(session, user.tenant_id)
     await session.commit()
-    api_key, base_url = service._provider_creds(row.config, payload.provider)
+    stored_key, stored_url = service._provider_creds(row.config, payload.provider)
+    # Prefer the unsaved value typed into the form; ignore masked/empty so the
+    # stored secret still wins when the field was left untouched.
+    typed = payload.api_key
+    api_key = typed if (typed and not service._is_masked(typed)) else stored_key
+    base_url = payload.base_url or stored_url
     result = await service.test_connection(payload.provider, api_key=api_key, base_url=base_url)
     return TestConnectionResponse(**result)
 

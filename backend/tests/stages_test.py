@@ -104,19 +104,54 @@ async def client():
     await engine.dispose()
 
 
-async def test_catalog_has_twelve_stages(client: AsyncClient):
+async def test_catalog_has_eighteen_blueprint_stages(client: AsyncClient):
     token = await _login(client, DESIGNER_EMAIL)
     if token is None:
         pytest.skip("dev DB or seed designer unavailable")
     resp = await client.get(f"{API}/stages", headers=_auth(token))
     assert resp.status_code == 200, resp.text
     catalog = resp.json()
-    assert len(catalog) == 12
+    assert len(catalog) == 18
     keys = {c["key"] for c in catalog}
-    assert "intake" in keys and "content_production" in keys
+    # First and last Blueprint stages plus a few renamed ones.
+    assert "intake" in keys and "analytics" in keys
+    assert {"clo_review", "assessment_weighting", "mastery_nodes", "node_relationships"} <= keys
+    # Legacy keys are exposed as aliases, never as canonical keys.
+    by_key = {c["key"]: c for c in catalog}
+    assert "clo_refinement" in by_key["clo_review"]["aliases"]
+    assert "assessment_rubrics" in by_key["assessment_weighting"]["aliases"]
+    assert "mastery_node_design" in by_key["mastery_nodes"]["aliases"]
+    assert "node_relationship_map" in by_key["node_relationships"]["aliases"]
+    assert "clo_refinement" not in keys
 
 
 async def test_single_run_succeeds_with_stub(client: AsyncClient):
+    token = await _login(client, DESIGNER_EMAIL)
+    if token is None:
+        pytest.skip("dev DB or seed designer unavailable")
+    course_id = await _create_course(client, token)
+    if course_id is None:
+        pytest.skip("could not create course")
+    try:
+        resp = await client.post(
+            f"{API}/stages/courses/{course_id}/stages/intake/run",
+            headers=_auth(token),
+            json={"mode": "single"},
+        )
+        assert resp.status_code == 200, resp.text
+        run = resp.json()
+        assert run["status"] == "succeeded"
+        assert run["execution_mode"] == "single"
+        assert run["review_status"] == "auto_ok"  # low-risk stage
+        # Works on the offline stub or a live model; both produce an artifact.
+        assert run["output"]["output_kind"] == "course_contract"
+        assert "stubbed" in run["output"]
+    finally:
+        await _cleanup_course(course_id)
+
+
+async def test_legacy_stage_key_alias_resolves(client: AsyncClient):
+    # A run posted under a legacy stage_key resolves to the canonical stage.
     token = await _login(client, DESIGNER_EMAIL)
     if token is None:
         pytest.skip("dev DB or seed designer unavailable")
@@ -131,10 +166,10 @@ async def test_single_run_succeeds_with_stub(client: AsyncClient):
         )
         assert resp.status_code == 200, resp.text
         run = resp.json()
+        # Stored canonically; clo_review is a high-risk council stage.
+        assert run["stage_key"] == "clo_review"
         assert run["status"] == "succeeded"
-        assert run["execution_mode"] == "single"
-        assert run["review_status"] == "auto_ok"  # low-risk stage
-        assert run["output"]["stubbed"] is True
+        assert run["review_status"] == "needs_review"
     finally:
         await _cleanup_course(course_id)
 
@@ -148,7 +183,7 @@ async def test_council_run_records_transcript(client: AsyncClient):
         pytest.skip("could not create course")
     try:
         resp = await client.post(
-            f"{API}/stages/courses/{course_id}/stages/content_production/run",
+            f"{API}/stages/courses/{course_id}/stages/clo_review/run",
             headers=_auth(token),
             json={"mode": "council"},
         )
@@ -173,7 +208,7 @@ async def test_stage_is_independent_of_upstream(client: AsyncClient):
         pytest.skip("could not create course")
     try:
         resp = await client.post(
-            f"{API}/stages/courses/{course_id}/stages/course_assembly/run",
+            f"{API}/stages/courses/{course_id}/stages/analytics/run",
             headers=_auth(token),
             json={"mode": "single"},
         )
