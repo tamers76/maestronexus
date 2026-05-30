@@ -1,4 +1,7 @@
+import Link from "next/link";
+
 import { HealthStatus } from "@/components/health-status";
+import { buttonVariants } from "@/components/ui/button";
 
 export default function Home() {
   return (
@@ -17,6 +20,10 @@ export default function Home() {
             frontend, and services wired together.
           </p>
         </div>
+
+        <Link href="/login" className={buttonVariants({ size: "lg" })}>
+          Sign in
+        </Link>
 
         <HealthStatus />
 
