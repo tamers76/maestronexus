@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://localhost:6379/0"
 
+    # ── Auth / JWT ──────────────────────────────────────────────────────
+    # SSO/OIDC is the production path (docs/14); local dev also supports
+    # email+password login. JWT signs short-lived access tokens and longer
+    # refresh tokens. Override jwt_secret in every non-local environment.
+    jwt_secret: str = "dev-only-insecure-change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 14
+
     s3_endpoint_url: str = "http://localhost:9000"
     s3_access_key: str = "maestro"
     s3_secret_key: str = "maestro-dev-secret123"
@@ -41,9 +50,31 @@ class Settings(BaseSettings):
     ai_default_provider: str = "openai"
     ai_default_model: str = "gpt-4o-mini"
 
+    # ── LLM Council defaults (docs: Stages-as-Features + Council) ────────
+    # Multiple models deliberate and a chairman synthesizes the final answer.
+    # These env values seed a tenant's first AiSettings row and act as the
+    # fallback when a stage/tenant has no explicit override. Per-stage and
+    # per-tenant overrides are edited at runtime via /integrations/ai-settings.
+    council_enabled: bool = True
+    council_members: Annotated[list[str], NoDecode] = [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4.1-mini",
+    ]
+    council_chairman_model: str = "gpt-4o"
+    # Stage keys whose default execution mode is "council" (all others default
+    # to "single"). Comma-separated in the environment.
+    council_default_stages: Annotated[list[str], NoDecode] = ["content_production"]
+
     # OpenAI (active)
     openai_api_key: str | None = None
     openai_base_url: str | None = None  # optional override (proxy / gateway)
+
+    # OpenRouter (active) — OpenAI-compatible gateway to a live, provider-namespaced
+    # catalog (e.g. anthropic/claude-3.5-sonnet). base_url defaults to
+    # https://openrouter.ai/api/v1 when unset (resolved in the integrations service).
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str | None = None
 
     # Additional vendors (set the key in .env to enable):
     anthropic_api_key: str | None = None
@@ -52,11 +83,16 @@ class Settings(BaseSettings):
     azure_openai_api_version: str | None = None
     google_api_key: str | None = None
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator(
+        "cors_origins",
+        "council_members",
+        "council_default_stages",
+        mode="before",
+    )
     @classmethod
-    def _split_cors(cls, value: object) -> object:
+    def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
+            return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
 
