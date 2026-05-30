@@ -25,3 +25,6 @@ yarn-error.log*
 # Logs / temp
 *.log
 tmp/
+
+# Local dev runtime (downloaded binaries, data, logs, scripts)
+.localdev/
