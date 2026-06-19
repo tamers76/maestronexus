@@ -90,10 +90,40 @@ async def test_connection(
     # Prefer the unsaved value typed into the form; ignore masked/empty so the
     # stored secret still wins when the field was left untouched.
     typed = payload.api_key
-    api_key = typed if (typed and not service._is_masked(typed)) else stored_key
+    is_new_key = bool(typed) and not service._is_masked(typed)
+    api_key = typed if is_new_key else stored_key
     base_url = payload.base_url or stored_url
     result = await service.test_connection(payload.provider, api_key=api_key, base_url=base_url)
-    return TestConnectionResponse(**result)
+
+    # Auto-save a freshly typed key once the connection is verified so the UI
+    # reflects a configured provider without a separate save step.
+    persisted = False
+    if result["success"] and is_new_key:
+        provider_patch: dict = {"api_key": typed}
+        if payload.base_url:
+            provider_patch["base_url"] = payload.base_url
+        await service.update(
+            session,
+            user.tenant_id,
+            {"providers": {payload.provider: provider_patch}},
+        )
+        await record_audit(
+            session,
+            tenant_id=user.tenant_id,
+            actor_id=user.id,
+            action="ai.settings.update",
+            object_type="ai_settings",
+            object_id=row.id,
+            metadata={
+                "keys": ["providers"],
+                "provider": payload.provider,
+                "via": "test_connection",
+            },
+        )
+        await session.commit()
+        persisted = True
+
+    return TestConnectionResponse(**result, persisted=persisted)
 
 
 @router.get(

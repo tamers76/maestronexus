@@ -85,6 +85,25 @@ async def test_get_settings_returns_catalog_and_resolved(client: AsyncClient):
         await _cleanup_tenant_settings(ADMIN_EMAIL)
 
 
+async def test_all_managed_providers_present(client: AsyncClient):
+    token = await _login(client, ADMIN_EMAIL)
+    if token is None:
+        pytest.skip("dev DB or seed admin unavailable")
+    try:
+        resp = await client.get(AI, headers=_auth(token))
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        providers = body["config"]["providers"]
+        # Every managed provider is present even with an empty tenant config so
+        # the UI can render a clear per-provider status.
+        for name in body["managed_providers"]:
+            assert name in providers, name
+            assert providers[name]["configured"] is False
+            assert providers[name]["api_key"] == ""
+    finally:
+        await _cleanup_tenant_settings(ADMIN_EMAIL)
+
+
 async def test_api_key_is_masked_on_read(client: AsyncClient):
     token = await _login(client, ADMIN_EMAIL)
     if token is None:
@@ -109,6 +128,30 @@ async def test_api_key_is_masked_on_read(client: AsyncClient):
             json={"providers": {"openai": {"api_key": openai_cfg["api_key"]}}},
         )
         assert again.json()["config"]["providers"]["openai"]["configured"] is True
+    finally:
+        await _cleanup_tenant_settings(ADMIN_EMAIL)
+
+
+async def test_failed_test_connection_does_not_persist(client: AsyncClient):
+    token = await _login(client, ADMIN_EMAIL)
+    if token is None:
+        pytest.skip("dev DB or seed admin unavailable")
+    try:
+        # A bad key fails the connection test (auth error / offline) so it must
+        # not be saved to the tenant store.
+        test = await client.post(
+            f"{AI}/test-connection",
+            headers=_auth(token),
+            json={"provider": "openai", "api_key": "sk-definitely-invalid-key"},
+        )
+        assert test.status_code == 200, test.text
+        body = test.json()
+        assert body["success"] is False
+        assert body["persisted"] is False
+
+        # GET still reports the provider as unconfigured.
+        resp = await client.get(AI, headers=_auth(token))
+        assert resp.json()["config"]["providers"]["openai"]["configured"] is False
     finally:
         await _cleanup_tenant_settings(ADMIN_EMAIL)
 

@@ -36,6 +36,9 @@ class TestConnectionRequest(BaseModel):
 class TestConnectionResponse(BaseModel):
     success: bool
     message: str
+    # True when a newly supplied key was saved to the tenant store after the
+    # connection test succeeded.
+    persisted: bool = False
 
 
 class ModelOption(BaseModel):

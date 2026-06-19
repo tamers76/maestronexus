@@ -3,6 +3,11 @@ import { DM_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
 import { AuthProvider } from "@/lib/auth";
+import {
+  PRODUCT_DESCRIPTION,
+  PRODUCT_NAME,
+  PRODUCT_TAGLINE,
+} from "@/lib/brand";
 import { ThemeProvider, ThemeScript } from "@/lib/theme";
 
 const dmSans = DM_Sans({
@@ -22,9 +27,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Curriculum Intelligence — Adaptive Learning System",
-  description:
-    "Turn a syllabus into a node-based adaptive learning curriculum. AI-native, learner-centric (maestronexus).",
+  title: `${PRODUCT_NAME} — ${PRODUCT_TAGLINE}`,
+  description: `${PRODUCT_DESCRIPTION} (${PRODUCT_NAME}).`,
 };
 
 export default function RootLayout({

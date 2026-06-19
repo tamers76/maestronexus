@@ -145,7 +145,12 @@ export function VersionPanel({
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    <Button size="xs" variant="outline" render={<Link href={graphHref(v.id)} />}>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      nativeButton={false}
+                      render={<Link href={graphHref(v.id)} />}
+                    >
                       <Network /> Editor
                     </Button>
                     {v.state !== "published" && (

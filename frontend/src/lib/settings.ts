@@ -79,7 +79,12 @@ export type AiSettingsUpdate = {
   stages?: Record<string, StageConfig>;
 };
 
-export type TestConnectionResult = { success: boolean; message: string };
+export type TestConnectionResult = {
+  success: boolean;
+  message: string;
+  /** True when a freshly typed key was saved to the tenant store after testing. */
+  persisted?: boolean;
+};
 export type ModelOption = { id: string; name: string };
 
 const BASE = "/integrations/ai-settings";

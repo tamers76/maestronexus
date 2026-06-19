@@ -183,12 +183,29 @@ def _mask_secret(value: str | None) -> str:
 
 
 def masked_config(config: dict) -> dict:
-    """Return ``config`` with provider API keys masked (never raw secrets)."""
+    """Return ``config`` with provider API keys masked (never raw secrets).
+
+    Always emits an entry for every managed provider so the Settings UI can show
+    a clear per-provider status. ``configured`` is true only when a key is stored
+    in the tenant DB (env fallbacks power runtime resolution but are not surfaced
+    as configured here).
+    """
 
     out = {k: v for k, v in config.items() if k != "providers"}
     providers = config.get("providers") or {}
     masked_providers: dict = {}
+    for name in MANAGED_PROVIDERS:
+        creds = providers.get(name) or {}
+        db_key = creds.get("api_key")
+        masked_providers[name] = {
+            "api_key": _mask_secret(db_key),
+            "base_url": creds.get("base_url") or "",
+            "configured": bool(db_key),
+        }
+    # Preserve any non-managed providers that may already be stored.
     for name, creds in providers.items():
+        if name in masked_providers:
+            continue
         creds = creds or {}
         masked_providers[name] = {
             "api_key": _mask_secret(creds.get("api_key")),

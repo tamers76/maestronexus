@@ -30,16 +30,24 @@ export function ProviderCard({
   provider,
   config,
   onChange,
+  onPersisted,
 }: {
   provider: string;
   config: ProviderConfig;
   onChange: (next: ProviderConfig) => void;
+  // Called after a freshly typed key is saved to the DB via a successful test,
+  // so the parent can refresh server-backed state (configured flag, catalog).
+  onPersisted?: (provider: string) => void;
 }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const label = PROVIDER_LABELS[provider] ?? provider;
   const live = LIVE_PROVIDERS.has(provider);
+  const saved = Boolean(config.configured);
+  // A non-empty key in the field that isn't the stored masked value.
+  const typedKey = Boolean(config.api_key && config.api_key.trim());
+  const unsaved = typedKey && !saved;
 
   const onTest = async () => {
     setTesting(true);
@@ -50,6 +58,7 @@ export function ProviderCard({
         base_url: config.base_url,
       });
       setResult({ ok: r.success, message: r.message });
+      if (r.persisted) onPersisted?.(provider);
     } catch (err) {
       setResult({
         ok: false,
@@ -66,62 +75,72 @@ export function ProviderCard({
         <div className="flex items-center gap-2">
           <KeyRound className="size-4 text-muted-foreground" />
           <span className="text-sm font-medium">{label}</span>
-          {config.configured ? (
-            <Badge variant="success">key set</Badge>
+          {saved ? (
+            <Badge variant="success">Saved</Badge>
+          ) : unsaved ? (
+            <Badge variant="warning">Unsaved</Badge>
           ) : (
-            <Badge variant="secondary">not set</Badge>
+            <Badge variant="secondary">Not configured</Badge>
           )}
         </div>
-        {!live && <Badge variant="outline">stub</Badge>}
+        {!live && <Badge variant="outline">Coming soon</Badge>}
       </div>
 
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`${provider}-key`}>API key</Label>
-          <Input
-            id={`${provider}-key`}
-            type="password"
-            autoComplete="off"
-            value={config.api_key ?? ""}
-            placeholder={config.configured ? "•••• stored — type to replace" : "sk-…"}
-            onChange={(e) => onChange({ ...config, api_key: e.target.value })}
-          />
-          <p className="text-xs text-muted-foreground">
-            Stored securely and shown masked. Leave the masked value untouched to keep it.
-          </p>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`${provider}-url`}>Base URL (optional)</Label>
-          <Input
-            id={`${provider}-url`}
-            value={config.base_url ?? ""}
-            placeholder={BASE_URL_PLACEHOLDERS[provider] ?? "https://api.openai.com/v1"}
-            onChange={(e) => onChange({ ...config, base_url: e.target.value })}
-          />
-        </div>
+      {live ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${provider}-key`}>API key</Label>
+            <Input
+              id={`${provider}-key`}
+              type="password"
+              autoComplete="off"
+              value={config.api_key ?? ""}
+              placeholder={saved ? "•••• stored — type to replace" : "sk-…"}
+              onChange={(e) => onChange({ ...config, api_key: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              {saved
+                ? "A key is saved for this provider. Test connection saves a new key automatically."
+                : "Paste a key, then Test connection — a working key is saved automatically."}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${provider}-url`}>Base URL (optional)</Label>
+            <Input
+              id={`${provider}-url`}
+              value={config.base_url ?? ""}
+              placeholder={BASE_URL_PLACEHOLDERS[provider] ?? "https://api.openai.com/v1"}
+              onChange={(e) => onChange({ ...config, base_url: e.target.value })}
+            />
+          </div>
 
-        <div className="flex items-center gap-3">
-          <Button size="sm" variant="outline" onClick={onTest} disabled={testing || !live}>
-            {testing ? <Loader2 className="animate-spin" /> : null}
-            {testing ? "Testing…" : "Test connection"}
-          </Button>
-          {result && (
-            <span
-              className={
-                "flex items-center gap-1 text-xs " +
-                (result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")
-              }
-            >
-              {result.ok ? (
-                <CheckCircle2 className="size-3.5" />
-              ) : (
-                <XCircle className="size-3.5" />
-              )}
-              {result.message}
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            <Button size="sm" variant="outline" onClick={onTest} disabled={testing}>
+              {testing ? <Loader2 className="animate-spin" /> : null}
+              {testing ? "Testing…" : "Test connection"}
+            </Button>
+            {result && (
+              <span
+                className={
+                  "flex items-center gap-1 text-xs " +
+                  (result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")
+                }
+              >
+                {result.ok ? (
+                  <CheckCircle2 className="size-3.5" />
+                ) : (
+                  <XCircle className="size-3.5" />
+                )}
+                {result.message}
+              </span>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {label} support isn&apos;t wired up yet. OpenAI and OpenRouter are available today.
+        </p>
+      )}
     </div>
   );
 }

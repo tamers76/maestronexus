@@ -30,6 +30,15 @@ import {
   updateAiSettings,
 } from "@/lib/settings";
 
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+  anthropic: "Anthropic",
+  azure_openai: "Azure OpenAI",
+  google: "Google",
+};
+const LIVE_PROVIDERS = ["openai", "openrouter"];
+
 export function SettingsWorkbench() {
   const { hasPermission } = useAuth();
   const canManage = hasPermission("integration.manage");
@@ -97,6 +106,19 @@ export function SettingsWorkbench() {
     [data],
   );
 
+  // Per-provider status for the summary bar: configured comes from the server
+  // (DB-backed), so it stays accurate after auto-save/refresh.
+  const providerStatus = useMemo(
+    () =>
+      (data?.managed_providers ?? []).map((p) => ({
+        key: p,
+        label: PROVIDER_LABELS[p] ?? p,
+        live: LIVE_PROVIDERS.includes(p),
+        configured: Boolean(data?.config.providers?.[p]?.configured),
+      })),
+    [data],
+  );
+
   const serverResolved = useMemo(() => {
     const map: Record<string, ResolvedStage> = {};
     (data?.resolved ?? []).forEach((r) => (map[r.stage_key] = r));
@@ -129,6 +151,25 @@ export function SettingsWorkbench() {
     return map;
   }, [data, draft, serverResolved]);
 
+  // Reload server-backed settings (used after a key is auto-saved via test).
+  const applyResponse = (resp: AiSettingsResponse) => {
+    setData(resp);
+    setDraft(structuredClone(resp.config));
+    const providers = resp.config.providers ?? {};
+    setCatalogProvider(providers.openrouter?.configured ? "openrouter" : "openai");
+  };
+
+  const refresh = async () => {
+    try {
+      const resp = await getAiSettings();
+      applyResponse(resp);
+      setToast("Provider key saved.");
+      setTimeout(() => setToast(null), 3000);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to refresh settings.");
+    }
+  };
+
   const setProvider = (name: string, next: ProviderConfig) =>
     setDraft((d) => ({ ...d, providers: { ...(d.providers ?? {}), [name]: next } }));
 
@@ -145,8 +186,7 @@ export function SettingsWorkbench() {
         council: draft.council,
         stages: draft.stages,
       });
-      setData(resp);
-      setDraft(structuredClone(resp.config));
+      applyResponse(resp);
       setToast("Settings saved.");
       setTimeout(() => setToast(null), 3000);
     } catch (err) {
@@ -230,15 +270,32 @@ export function SettingsWorkbench() {
                 wired.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {(data?.managed_providers ?? []).map((p) => (
-                <ProviderCard
-                  key={p}
-                  provider={p}
-                  config={draft.providers?.[p] ?? {}}
-                  onChange={(next) => setProvider(p, next)}
-                />
-              ))}
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+                {providerStatus.map((s) => (
+                  <span key={s.key} className="flex items-center gap-1.5">
+                    <span className="font-medium text-foreground">{s.label}:</span>
+                    {!s.live ? (
+                      <span className="text-muted-foreground">Coming soon</span>
+                    ) : s.configured ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">Saved</span>
+                    ) : (
+                      <span className="text-muted-foreground">Not configured</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {(data?.managed_providers ?? []).map((p) => (
+                  <ProviderCard
+                    key={p}
+                    provider={p}
+                    config={draft.providers?.[p] ?? {}}
+                    onChange={(next) => setProvider(p, next)}
+                    onPersisted={() => refresh()}
+                  />
+                ))}
+              </div>
             </CardContent>
           </Card>
 
